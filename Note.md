@@ -8,7 +8,7 @@
   通过上述命令生成全为 0 的，大小为 1474560 `byte` 的二进制文件，再根据作者提示在二进制文件相应位置作更改即可；
 
 - `helloos.img` 运行流程：
-  ```cmd
+  ```bash
   <!-- 1. !cons_nt.bat -->
   cmd.exe
 
@@ -34,27 +34,214 @@
   - `DW`: `define word`，在计算机汇编语言的世界里，`word` 指的是 16 位的意思，即 2 个字节；
   - `DD`: `define double-word`，32 位，即 4 字节；
   - `RESB`: `reserve byte`，预留空间指令。`eg: RESB 10`，表示预留 10 个字节的空间；`RESB 0x1fe-$`，其中 `$` 表示一个变量，用以记录当前的字节数；
+  - `HLT`:
+  - `JMP`: 跳转指令（`JMP`）机器码 `EB`
 - `asm.bat`
   ```cmd
   ..\z_tools\nask.exe helloos.nas helloos.img
   ```
   其中`nask` 是作者根据 `NASM` 开发的汇编语言编译器；
 
+### 汇编文件加工润色 `helloReadable.nas`
+- 汇编文件占 512 个字节，其中最后两个字节的内容为 `0x55 0xAA`（具体原因见后续启动区内容）；
+
 ### 扩展知识
-- `TAB-4`： 表示 `TAB` 键的宽度为 4；
-- `FAT12` 格式： `FAT12 Format` 用 `Windows` 或 `MS-DOS` 格式化出来的软盘就是这种格式；（文件系统内容）
-- 启动区：
+#### 操作系统启动盘制作和 `QEMU`；
+#### `TAB-4`
+  - 表示 `TAB` 键的宽度为 4；
+#### `FAT12` 格式
+  - `FAT12 Format` 用 `Windows` 或 `MS-DOS` 格式化出来的软盘就是这种格式（文件系统内容）；
+#### 启动区：
   - `boot sector`，**软盘的第一个扇区称为启动区**；**计算机首先从最初一个扇区开始读软盘，然后去检查这个扇区最后 2 个字节的内容。如果这最后 2 个字节的内容不是 `0x55 0xAA`，计算机会认为这张软盘上没有所需的启动程序，就会报一个不能启动的错误**；
   - 计算机读写软盘的时候并不是一个字节一个字节地读写，而是以 512 字节为单位进行读写。因此，软盘的 512 字节就称为一个扇区；
   - 一张软盘的空间共有 1440KB，也就是 1474560 字节，即 2880 个扇区；
-- `IPL`：
+#### `IPL`：
   - `initial program loader`，即启动程序加载器；
   - 启动区只有区区 512 字节，实际操作系统根本装不进去。所以几乎所有的操作系统都是把加载操作系统给本身的程序放在启动区里；因此，有时也将启动区称为 `IPL`；
   - 可以将 `HELLOIPL` 换成别的名字，但必须是 8 个字节长度；
-- `boot`，即 `bootstrap`，操作系统自动启动机制；
+#### `boot`
+  - 即 `bootstrap`，操作系统自动启动机制；
 
-### 汇编文件加工润色
-- 汇编文件占 512 个字节，其中最后两个字节的内容为 `0x55 0xAA`（具体原因见后续启动区内容）；
+## 02 Day
+### 汇编文件进一步加工
+```bash
+; helloReadable02.nas
+; hello-os
+; TAB=4
 
+    ORG		0x7c00          ; 指明程序的装载地址
+
+; 以下的记述用于标准 FAT12 格式的软盘
+
+    JMP		entry
+    DB		0x90
+    DB		"HELLOIPL"      ; 启动扇区名称，8 字节	
+    DW		512				; 每个扇区（sector）大小，必须为 512 字节
+    DB		1				; 簇（cluster）大小，必须为 1 个扇区
+    DW		1				; FAT 起始位置，一般为第一个扇区
+    DB		2				; FAT 个数，必须为 2
+    DW		224				; 根目录大小，一般为 224 项
+    DW		2880			; 该磁盘的大小，必须是 2880 扇区
+    DB		0xf0			; 磁盘的种类，必须是 0xf0
+    DW		9				; FAT 的长度，必须是 9 个扇区
+    DW		18				; 一个磁道（track）有几个扇区，必须是 18
+    DW		2				; 磁头数，必须是 2
+    DD		0				; 不使用分区，必须是 0
+    DD		2880			; 重写一次磁盘大小
+    DB		0,0,0x29		; 意义不明，固定
+    DD		0xffffffff		; （可能是）卷标号码
+    DB		"HELLO-OS   "	; 磁盘的名称，必须为 11 字节
+    DB		"FAT12   "		; 磁盘格式名称，必须为 8 字节
+    RESB	18				; 空出 18 个字节
+
+; 程序核心
+
+entry:
+    MOV		AX,0	        ; 初始化寄存器
+    MOV		SS,AX
+    MOV		SP,0x7c00
+    MOV		DS,AX
+    MOV		ES,AX
+
+    MOV		SI,msg
+putloop:
+    MOV		AL,[SI]
+    ADD		SI,1	        ; 给 SI 加 1
+    CMP		AL,0
+    JE		fin
+    MOV		AH,0x0e	        ; 显示一个文字
+    MOV		BX,15	        ; 指定字符颜色
+    INT		0x10	        ; 调用显卡 bios
+    JMP		putloop
+fin:
+    HLT				        ; 让 CPU 停止，等待指令
+    JMP		fin		        ; 无限循环
+
+msg:
+    DB		0x0a, 0x0a      ; 换行 2 次
+    DB		"hello, world"
+    DB		0x0a	        ; 换行
+    DB		0
+
+    RESB	0x7dfe-$        ; 填写 0x00 直到 0x001fe
+
+    DB		0x55, 0xaa
+
+; 以下是启动区以外部分的输出
+
+    DB		0xf0, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00
+    RESB	4600
+    DB		0xf0, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00
+    RESB	1469432
+```
+- **运行流程**（`x86` 实模式下的启动扇区（`boot sector`）程序）：
+  1. 上电 -> `BIOS` 进行硬件自检（`POST`）；
+  2. `BIOS` 搜索可启动设备（软盘、硬盘、U 盘等，软盘：个人电脑最早使用的移动存储介质，类似于 U 盘。软盘存取速度慢，容量也小，但可装卸、携带方便。目前普遍使用硬盘和 U 盘）;
+  3. 如果发现设备第一个扇区（第 0 扇区，512 字节）最后两个字节的内容是 `0x55 0xAA`，就认为它是启动扇区；
+  4. `BIOS` 将这 **512 字节**原样复制到内存地址 `0x7c00`（对应到上述代码中的 `ORG 0x7c00`）;
+  5. 然后执行一条跳转指令（对应为 `JMP entry`），`CS:IP = 0000:7c00`，开始运行 `entry` 中的代码；
+  6. `msg` 表示将要显示的字符串，在 `entry` 的结束时将其地址赋值给 `SI` 寄存器；
+  7. `entry -> putloop -> putloop -> ...(read msg done, read '\0') -> fin`
+  8. 在 `putloop` 中使用 `BIOS` 中断 `INT 0x10`(功能号 `AH=0x0E`)在屏幕上打印字符。其中 `AL` 表示要显示的字符，`BH` 表示页号，`BL` 表示颜色；
+  9. 最后执行 `fin`，进入停机循环，`HLT` 指令让 `CPU` 暂停，等待外部中断（如键盘中断）。**`HLT` 避免空循环，节能**。
+- 上述汇编代码的**其他说明**：
+  - `BIOS` 把 512 字节读进内存 `0x7c00`，最后一步是“跳转到 `0:7c00`”，相当于 `JMP 0x0000:0x7c00(CS:IP)`, 从此处取第一条指令。而源码在 `0x7c00` 处正是 `JMP entry`，于是 `CPU` 立即跳到 `entry` 标号；
+  - `entry` 即表示一个地址（偏移 `0x7c62` 左右），于是 `JMP entry` 为跳转到该地址开始执行程序；
+  - `entry` 中的内容：初始化段寄存器，给 `SS, DS, ES` 初始化为 0，`SP` 初始化为 `0x7c00`，此时的内存布局大致为：
+    ```bash
+    0x00000+------------------+
+          | 中断向量表 (IVT)  |
+    0x00400+------------------+
+          | BIOS 数据区       |
+    0x07C00+------------------+ <-- 代码从这里开始
+          | 启动扇区 (512B)   |
+    0x07E00+------------------+
+          | 空闲内存          |
+    ```
+  - 启动区以外的数据：`DB 0xf0, 0xff...`，它们不在 512 字节启动扇区范围内，`BIOS` 不会加载它们，也不会执行；**它们只是占位，让镜像文件符合软盘格式（`1.44MB = 2880` 扇区）**，方便写盘或虚拟机测试；
+  - `JMP entry` 后的代码 `DB 0x90...` 永远都不会执行，它只是在引导扇区头 **62 字节**里占位置的数据，不是指令；从 `DB 0x90...`（从 `0x7c02 ~ 0x7c3d`）全部是 `FAT12` 引导参数（`OEM` 名（原始设备制造商名），扇区大小、`FAT` 表个数......），供系统识别；
+  - `BIOS` 只检查最后两个字节是不是 `0x55 0xAA` 来决定这是不是启动扇区，一旦满足，它就把整个 512 字节原样搬进内存 `0x7c00` 并跳转，不解析也不关心前面 510 字节里放了什么数据；**“这是什么格式的软盘”——FAT12、FAT16、NTFS、ext，都是操作系统或引导程序自己的任务，从而决定怎么继续读盘**；换句话说，`BIOS` 只关心能否以该盘启动的问题；
+  - `BIOS` 的工作到此为止：扇区末尾签名正确 -> 加载 -> 跳转；
+  - 把 `SP` 设成 `0x7c00` 是典型的做法：
+    - `todo`:程序加载后的内存分布：程序 + `BIOS` + 中断向量表 + `SP` 的允许移动的范围（结合上述内存布局）；
+  - 上述 `SS:SP、CS:IP` 表示**16 位实模式下的段寄存器:偏移寄存器对**，**用来拼成 20 位物理地址**（因此寻址范围在 `1MB` 左右），**物理地址 = 段寄存器 × 16 + 偏移寄存器**：
+    | 寄存器对                    | 名称       | 作用                 | 举例（值）               | 算出物理地址  |
+    | ----------------------- | -------- | ------------------ | ------------------- | ------- |
+    | **CS:IP**               | 代码段:指令指针 | 指出**下一条要执行的指令**在哪里 | CS=0x07C0 IP=0x0000 | 0x07C00 |
+    | **SS:SP**               | 栈段:栈指针   | 指出**当前栈顶**在哪里      | SS=0x0000 SP=0x7C00 | 0x07C00 |
+    | **DS:BX** 或 **DS:SI** 等 | 数据段:偏移   | 指出**数据**在哪里        | DS=0x0000 SI=0x7C62 | 0x07C62 |
+    1. `CS:IP` 决定 `CPU` 从哪儿取指令；
+    2. `SS:SP` 决定 `push/pop/call/ret` 时栈内存的位置；
+    3. `DS/ES/FS/GS` 配合通用寄存器，用来访问数据。
+    4. 在实模式里，所有内存访问都必须通过“**段:偏移**”这对组合来生成 **20 位地址**，最大寻址 **1 MB**（0x00000 ∼ 0xFFFFF）；**20 位是 16 位实模式的硬件限制**；**段:偏移→20 位**只是 16 位实模式的遗产；**现代 `CPU` 一上电先模拟这段历史，随后由操作系统切换到保护/长模式**，才打开真正的 `4 GB` 甚至更大地址空间（要访问 `4 GB` 需要进入 *32 位保护模式*（或 *64 位长模式*））；（`todo`，什么是实模式？）
+    5. 保护模式下段寄存器不再当“段基址”用，而是索引 `GDT/LDT` 里的段描述符，描述符里放 32 位基址 + 32 位偏移 → 物理地址可达 4 GB（开启分页后更是线性地址 4 GB）。再往后 64 位长模式干脆把段基址固定为 0，直接用 64 位 `RIP` 寻址，理论 16 EB（实际 48-57 位地址线）
+  - `PC`（程序计数器） 就是 `IP(Instruction Pointer, 16bits), EIP(Extended Instruction Pointer, 32bits), RIP(Register Instruction Pointer, 64bits)`：每个时钟周期 `CPU` 把 `CS:IP` 拼成物理地址送地址总线，同时把 `IP` 加上当前指令长度；始终保存着**下一条待执行指令**的偏移地址；
+
+### 启动区文件 `ipl.nas`
+### 加入 `makefile`
+### 扩展知识
+#### `CPU` 中的寄存器
+- 16 位寄存器
+- 8  位寄存器
+- 32 位寄存器
+- 段寄存器
+#### 从开机到系统运行的启动过程
+- 启动扇区的加载，见“汇编文件进一步加工”；
+---
+几个概念：`boot, bootloader, bios, u-boot, grup...`
+- `bios` 与 `boot` 程序：
+  - 严格说 `BIOS ≠ boot` 程序，而是 `boot` 流程的“第一棒”，它只做最底线的硬件初始化 + 把真正的 `boot` 代码搬进内存并跳转：
+    | 项目   | BIOS                            | Boot 程序（Bootloader）        |
+    | ---- | ------------------------------- | -------------------------- |
+    | 存放位置 | 主板 ROM（Flash）                   | 磁盘/SSD/U 盘第 0 扇区或 EFI 分区   |
+    | 运行时机 | 上电立刻执行                          | BIOS/UEFI 跳转之后             |
+    | 任务   | POST、提供底层 I/O 接口、找启动设备、加载 512 B | 加载操作系统内核或第二阶段 loader       |
+    | 大小   | 通常 1–16 MB                      | 传统 MBR 仅 512 B；UEFI 可 MB 级 |
+    | 是否常驻 | 常驻内存高端，提供中断服务                   | 通常把控制权交给 OS 后就退出           |
+  - `BIOS` 是“**固件引导器**”，负责把“第一道 `bootloader`”搬进 `RAM` 并跳过去；
+  - `Boot` 程序是“**软件引导器**”，负责把**操作系统**本身拉进内存并启动；
+  - `BIOS` 可以看成 `boot` 流程的“第 0 阶段”，但不是通常所说的 `boot` 程序；
+  - `CPU` 出厂时 没有 `BIOS`；主板厂/社区把 `BIOS/bootloader` 烧进 外部 `SPI-Flash`；只要主板允许刷写，就能掌控从 `Reset Vector` 起的每一行代码。
+
+- `bios` 流程：
+  - BIOS 的实现分三层：1.上电第一条指令（`reset vector`）；2.早期硬件初始化（芯片级）；3.建立软件环境并加载 bootloader；
+  - 全程用纯 16 位实模式汇编 + 少量 C 写成，固化在主板 `SPI-Flash` 里，上电后由 `CPU` 直接取指执行。如下按时间线给出主流 `UEFI BIOS（Intel/AMI/Insyde）`与传统 `Legacy BIOS` 都遵循的典型流程：
+    1. `CPU` 一上电（`Reset Vector`）：所有 `x86 CPU` 复位后进入 `0xFFFFFFF0`（-16 MB 处），该地址映射到主板 `SPI-Flash` 顶部，第一条指令通常是：`jmp far 0xF000:0xE05B   ; 跳到 Flash 内部的 16 位入口`；此时内存控制器还没初始化，只能使用 `CPU` 内部 `Cache-as-RAM（CAR）`作为临时栈。
+    2. 极早期硬件初始化（`PEI` 阶段，`UEFI` 术语）：1.设置 `CAR（Cache-as-RAM）`，得到几 `KB` 可用栈；2.配置时钟、电源管理（PCH 寄存器）；3.训练内存 `PHY` → 把 `DIMM` 参数写到 `SPD`，执行 `MRC（Memory Reference Code）`；4.内存可用后，`CAR` 关闭，栈搬到 `DRAM` 低端（`0x7000` 左右）；
+    3. 建立软件环境（`DXE / Legacy POST`）：
+        | Legacy 模式                           | UEFI 模式                   |
+        | ----------------------------------- | ------------------------- |
+        | 扫描 ISA/PCI 设备 → 填写 **IRQ 路由表**      | 加载 DXE Driver（\*.efi）     |
+        | 初始化键盘、RTC、IDE/SATA 控制器              | 枚举 PCI/ACPI/USB/Graphics  |
+        | 填写 **BIOS Data Area (BDA)** 0x00400 | 构建 **ACPI table**、SMBIOS  |
+        | 提供 **INT 13h/10h/16h** 等实模式接口       | 提供 **UEFI Boot Services** |
+    4. 寻找启动设备并加载 `Bootloader`：1.按 `BBS`（`BIOS Boot Specification`）顺序扫描：`SATA-0 → USB → NVMe → PXv4 → PXv6 …`；2.把选中设备的 `LBA 0` 读进内存 `0x7C00（Legacy）`或 `\EFI\BOOT\BOOTX64.EFI（UEFI）`；3.校验最后两字节是否为 `0x55 0xAA（Legacy）`或 `PE/COFF` 签名（`UEFI`）；4.跳转到 `0x7C00` 或 `StartImage(BootX64.efi)`，把控制权交给 `Bootloader`；
+    5. 代码实现手段：前 `4 KB` 几乎全是 16 位汇编（`Intel` 语法）；内存初始化后可用 `C（Xcode/VisualAge/ GCC 16-bit）`；固件载体：`8 MB/16 MB SPI-NOR Flash`，顶部 `4 KB` 为 `Boot Block`，包含 `Reset Vector` 和早期 `PEI` 代码；调试口：`80h IO` 端口 `POST` 码、`LPC/SIO UART、JTAG/DCI`；标准模块：`Intel FSP（Firmware Support Package）、AMI MRC、EDK2/DXE` 驱动框架；
+
+- `bios, grup, boot, bootload, u-boot`：
+    ```bash
+    上电 ──► 固件 ──► Bootloader ──► 操作系统内核
+              │           │
+            BIOS/UEFI   grub/u-boot/etc.
+    ```
+  - `BIOS / UEFI` —— 固件（`firmware`）:
+    - 存在位置：主板 `SPI-Flash`；
+    - 运行时机：`CPU` 复位后立刻执行；
+    - 任务：初始化时钟、内存、PCI、USB、显示 …；提供 `INT 10h/13h/15h（Legacy）`或 `BootServices/RuntimeServices（UEFI）`；按启动顺序找到“下一阶段映像”并加载，然后把控制权交给它。
+  - `Boot / Bootload` —— 通称“引导阶段”：
+    - 英文里 boot = bootstrap，bootloader = 引导器；中文常混用；
+    - 按场景再分两级：第一阶段 `bootloader`（`MBR 512 B、UEFI BOOTX64.EFI、SPL`）；第二阶段 `bootloader`（`grub2、u-boot proper、Windows bootmgr`）；
+  - `grub / u-boot / bootmgr` —— 具体的 `bootloader` 实现
+    - `grub（GRand Unified Bootloader）`：面向 `PC`，支持 `Legacy BIOS` 与 `UEFI`；功能：文件系统解析、多系统菜单、加载 `Linux / Windows / initrd`；
+    - `u-boot（Universal Boot Loader）`：面向嵌入式`/ARM/PowerPC/RISC-V`；常分成 `SPL`（第一级）+ `u-boot proper`（第二级）；能做 `DDR` 初始化、网络 `TFTP`、烧写 `Flash`、启动 `Linux/Android`；
+    - `Windows bootmgr`：微软的第二阶段 `loader`，负责加载 `winload.efi` → 内核；
+  - `BIOS/UEFI` 把机器从“砖头”带到“内存可用、设备枚举完成”状态 -> 找到磁盘里的 `grub` 或 `u-boot` 或 `bootmgr` -> 这些 `bootloader` 再把 `OS` 内核 搬进内存并跳转 -> 内核开始运行，整个引导结束
+
+- `MCU` 中的 `bootloader`：
+    `MCU` 圈里说的 “`bootloader`” 通常指 “片上 `BootROM` 之后、用户应用程序之前” 的那一小段 用户可改写的程序——它确实相当于 `PC` 概念里的 第一阶段 `bootloader`，但实现和叫法跟 `PC` 略有差别：
+  - 片上固化 `BootROM`（`mask-ROM`）：由芯片厂写死，上电先跑；负责把用户 `boot` 映像从 `UART/SPI/I²C/USB/Flash` 搬到 `RAM` 或内部 `SRAM`；有的厂商把它叫 `primary bootloader` 或 `ISP loader`；
+  - 用户 `bootloader`（就是 `MCU` 开发者口中的 `bootloader`）：放在 `Flash` 起始区域，大小几 KB～几十 KB；任务：初始化时钟、RAM、外设 → 通过 `UART/USB/CAN/OTA` 接收新固件 → 写入应用区 → 跳转到应用；厂商文档里常叫 `secondary bootloader` 或 `user bootloader`；对应到 `PC` 的术语，它正是 第一阶段 `bootloader`（`MBR / SPL` 的角色）；
+  - 用户应用程序：放在 `bootloader` 之后；
+  - `MCU` 开发者说的 “`bootloader`” ≈ `PC` 的 `first-stage bootloader`，只是 `MCU` 里没有 `BIOS/UEFI`，也没有 `512 B` 限制，常常把“第一阶段”和“第二阶段”合并成一段用户代码罢了。
 
 ## 第一周小结
