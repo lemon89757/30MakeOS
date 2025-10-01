@@ -8,7 +8,7 @@
   通过上述命令生成全为 0 的，大小为 1474560 `byte` 的二进制文件，再根据作者提示在二进制文件相应位置作更改即可；
 
 - `helloos.img` 运行流程：
-  ```bash
+  ```bat
   <!-- 1. !cons_nt.bat -->
   cmd.exe
 
@@ -34,8 +34,17 @@
   - `DW`: `define word`，在计算机汇编语言的世界里，`word` 指的是 16 位的意思，即 2 个字节；
   - `DD`: `define double-word`，32 位，即 4 字节；
   - `RESB`: `reserve byte`，预留空间指令。`eg: RESB 10`，表示预留 10 个字节的空间；`RESB 0x1fe-$`，其中 `$` 表示一个变量，用以记录当前的字节数；
-  - `HLT`:
-  - `JMP`: 跳转指令（`JMP`）机器码 `EB`
+  - `ORG`: `Origin`，装载指令，指示将机器语言（当前文本内容）装载到内存中的哪个地址；此时，`$` 指令也不再表示输出文件的第几个字节，而是代表将要读入的内存地址；
+  - `JMP`: 跳转指令（`JMP`）机器码 `EB`；`JE`，条件跳转指令，如果前面的比较指令结果为相等，则转入 `JE` 进行跳转；如果不等，则不跳转，继续执行下一条指令；
+  - `MOV`: 赋值指令；`eg`: 
+    - `MOV AX,0`、`MOV SS,AX`；
+    - `MOV AL,[SI]`：读取 `SI` 的值所对应的内存地址并将读取结果赋给 `AL`）；
+    - `MOV BYTE [678], 123`：用 `678` 号内存来保存 `123` 这个数值，`BYTE` 表示只占用一个字节内存；`MOV WORD [678], 123`，还是用 `678` 号内存来保存 `123` 这个数值，只不过这次需要使用 `WORD` 即 2 个字节内存，对应为 `678` 和 `679` 号内存。其中 `123d` 即 `0000 0000 0111 1011b` 的 `0000 0000` 保存在 `679` 号内存，剩余的 `0111 1011` 保存在 `678` 号内存；
+    - `MOV` 指令有一个规则，就是源数据和目的数据必须相同位数。也就是说，能向 `AL` 里代入的就只有 `BYTE`，这样一来就可以省略 `BYTE`，即可以写成：`MOV AL, [SI]`；
+  - `ADD`: 加法指令，`ADD SI, 1` 即表示 `SI += 1`；
+  - `CMP`: 比较指令，`CMP AL, 0`，表示如果二者相等或不等，需要做什么（后接条件跳转指令等）；
+  - `INT`: 软件中断指令；
+  - `HLT`: `halt`（停止），让 `CPU` 停止动作的指令，使 `CPU` 进入待机状态；在循环中可以避免 `CPU` 全力执行 `JMP` 指令，从而达到降低能耗的目的；
 - `asm.bat`
   ```cmd
   ..\z_tools\nask.exe helloos.nas helloos.img
@@ -64,7 +73,7 @@
 
 ## 02 Day
 ### 汇编文件进一步加工
-```bash
+```asm
 ; helloReadable02.nas
 ; hello-os
 ; TAB=4
@@ -146,7 +155,8 @@ msg:
   9. 最后执行 `fin`，进入停机循环，`HLT` 指令让 `CPU` 暂停，等待外部中断（如键盘中断）。**`HLT` 避免空循环，节能**。
 - 上述汇编代码的**其他说明**：
   - `BIOS` 把 512 字节读进内存 `0x7c00`，最后一步是“跳转到 `0:7c00`”，相当于 `JMP 0x0000:0x7c00(CS:IP)`, 从此处取第一条指令。而源码在 `0x7c00` 处正是 `JMP entry`，于是 `CPU` 立即跳到 `entry` 标号；
-  - `entry` 即表示一个地址（偏移 `0x7c62` 左右），于是 `JMP entry` 为跳转到该地址开始执行程序；
+  - `0x0000 7c00 ~ 0x0000 7dff`，启动区内容的装载地址（规定）；
+  - `entry` 即表示一个地址（偏移 `0x7c50` 左右），于是 `JMP entry` 为跳转到该地址开始执行程序(`entry:` 标签的声明。在汇编语言中，所有标签都仅仅是单纯的数字，每个标签对应的数字是由汇编语言编译器根据 `ORG` 命令计算出来的。编译器计算出的“标签的地方对应的内存地址”就是那个标签的值额值)；
   - `entry` 中的内容：初始化段寄存器，给 `SS, DS, ES` 初始化为 0，`SP` 初始化为 `0x7c00`，此时的内存布局大致为：
     ```bash
     0x00000+------------------+
@@ -159,7 +169,7 @@ msg:
           | 空闲内存          |
     ```
   - 启动区以外的数据：`DB 0xf0, 0xff...`，它们不在 512 字节启动扇区范围内，`BIOS` 不会加载它们，也不会执行；**它们只是占位，让镜像文件符合软盘格式（`1.44MB = 2880` 扇区）**，方便写盘或虚拟机测试；
-  - `JMP entry` 后的代码 `DB 0x90...` 永远都不会执行，它只是在引导扇区头 **62 字节**里占位置的数据，不是指令；从 `DB 0x90...`（从 `0x7c02 ~ 0x7c3d`）全部是 `FAT12` 引导参数（`OEM` 名（原始设备制造商名），扇区大小、`FAT` 表个数......），供系统识别；
+  - `JMP entry` 后的代码 `DB 0x90...` 永远都不会执行，它只是在引导扇区头 **0x50 字节**里占位置的数据，不是指令；从 `DB 0x90...`（从 `0x7c02 ~ 0x7c3d`）全部是 `FAT12` 引导参数（`OEM` 名（原始设备制造商名），扇区大小、`FAT` 表个数......），供系统识别；
   - `BIOS` 只检查最后两个字节是不是 `0x55 0xAA` 来决定这是不是启动扇区，一旦满足，它就把整个 512 字节原样搬进内存 `0x7c00` 并跳转，不解析也不关心前面 510 字节里放了什么数据；**“这是什么格式的软盘”——FAT12、FAT16、NTFS、ext，都是操作系统或引导程序自己的任务，从而决定怎么继续读盘**；换句话说，`BIOS` 只关心能否以该盘启动的问题；
   - `BIOS` 的工作到此为止：扇区末尾签名正确 -> 加载 -> 跳转；
   - 把 `SP` 设成 `0x7c00` 是典型的做法：
@@ -169,26 +179,114 @@ msg:
     | ----------------------- | -------- | ------------------ | ------------------- | ------- |
     | **CS:IP**               | 代码段:指令指针 | 指出**下一条要执行的指令**在哪里 | CS=0x07C0 IP=0x0000 | 0x07C00 |
     | **SS:SP**               | 栈段:栈指针   | 指出**当前栈顶**在哪里      | SS=0x0000 SP=0x7C00 | 0x07C00 |
-    | **DS:BX** 或 **DS:SI** 等 | 数据段:偏移   | 指出**数据**在哪里        | DS=0x0000 SI=0x7C62 | 0x07C62 |
+    | **DS:BX** 或 **DS:SI** 等 | 数据段:偏移   | 指出**数据**在哪里        | DS=0x0000 SI=0x7C50 | 0x07C50 |
     1. `CS:IP` 决定 `CPU` 从哪儿取指令；
     2. `SS:SP` 决定 `push/pop/call/ret` 时栈内存的位置；
     3. `DS/ES/FS/GS` 配合通用寄存器，用来访问数据。
     4. 在实模式里，所有内存访问都必须通过“**段:偏移**”这对组合来生成 **20 位地址**，最大寻址 **1 MB**（0x00000 ∼ 0xFFFFF）；**20 位是 16 位实模式的硬件限制**；**段:偏移→20 位**只是 16 位实模式的遗产；**现代 `CPU` 一上电先模拟这段历史，随后由操作系统切换到保护/长模式**，才打开真正的 `4 GB` 甚至更大地址空间（要访问 `4 GB` 需要进入 *32 位保护模式*（或 *64 位长模式*））；（`todo`，什么是实模式？）
     5. 保护模式下段寄存器不再当“段基址”用，而是索引 `GDT/LDT` 里的段描述符，描述符里放 32 位基址 + 32 位偏移 → 物理地址可达 4 GB（开启分页后更是线性地址 4 GB）。再往后 64 位长模式干脆把段基址固定为 0，直接用 64 位 `RIP` 寻址，理论 16 EB（实际 48-57 位地址线）
   - `PC`（程序计数器） 就是 `IP(Instruction Pointer, 16bits), EIP(Extended Instruction Pointer, 32bits), RIP(Register Instruction Pointer, 64bits)`：每个时钟周期 `CPU` 把 `CS:IP` 拼成物理地址送地址总线，同时把 `IP` 加上当前指令长度；始终保存着**下一条待执行指令**的偏移地址；
+  - `INT 0x10`：调用中断号为 `0x10` 的中断（控制显卡）；后续的内容，以显示一个字符：`AH=0x0e`，`AL=character code`，`BH=0`，`BL=color code`；
+  - 由 `helloReadable.nas -> helloReadable02.nas` 的转变：
+    1. `helloReadable.nas` 中哪些内容对应到了 `helloReadable02.nas` 中的 `ORG 0x7c00`：`todo`；
+    2. 前者的 `DB 0xeb, 0x4e` 怎么对应到 `JMP entry`：`JMP` 对应到 `0xeb`，但是 `entry` 不是对应到 `0x7c50`？`todo`；
 
 ### 启动区文件 `ipl.nas`
+- 即 `helloReadable02.nas` 中除启动区以外的部分；
+
 ### 加入 `makefile`
+- `Makefile`
+  ```Makefile
+  default:
+    ../z_tools/make.exe img
+
+  ipl.bin: ipl.nas Makefile
+    ../z_tools/nask.exe ipl.nas ipl.bin ipl.lst
+
+  helloos.img: ipl.bin Makefile
+    ../z_tools/edimg.exe imgin:../z_tools/fdimg0at.tek \
+    wbinimg src:ipl.bin len:512 from:0 to:0 imgout:helloos.img
+
+  asm:
+    ../z_tools/make.exe -r ipl.bin
+
+  img:
+    ../z_tools/make.exe -r helloos.img
+
+  run:
+    ../z_tools/make.exe img
+    copy helloos.img ..\z_tools\qemu\fdimage0.bin
+    ../z_tools/make.exe -C ../z_tools/qemu
+
+  install:
+    ../z_tools/make.exe img
+    ../z_tools/imgtol.com w a: helloos.img
+
+  clean:
+    -del ipl.bin
+    -del ipl.lst
+  
+  src_only:
+    ../z_tools/make.exe clean
+    -del helloos.img
+  ```
+  其中：
+    - `ipl.lst` 文件为 `Assembler list file`，主要用来存储汇编程序列表数据。[编译工具链之三 ARM-MDK、IAR、GCC 的 .map 文件、.lst 文件](https://blog.csdn.net/zcshoucsdn/article/details/130449260)
+    - `make -r`，即 `make -no-buildin-rules`, eliminate use of the build-in implicit rules.
+    - `${MAKE} -C subdir`，等价于 `cd subdir && ${MAKE}`；`-C dir` 即 `--directory=dir`，change to directory `dir` before reading the makefiles. If multiple `-C` options are specified, each is interpreted relative to the previous one: `-C / -C etc` is equivalent to `-C /etc`.（`CC`, `C Compiler`）
+- `make.bat`:
+  ```bat
+  ..\z_tools\make.exe %1 %2 %3 %4 %5 %6 %7 %8 %9
+  ```
+
 ### 扩展知识
 #### `CPU` 中的寄存器
-- 16 位寄存器
 - 8  位寄存器
+  - `AL`: 累加寄存器低位，`accumulator low`；
+  - `CL`: 计数寄存器低位，`counter low`；
+  - `DL`: 数据寄存器低位，`data low`；
+  - `BL`: 基址寄存器低位，`base low`；
+  - `AH`: 累加寄存器高位，`accumulator high`；
+  - `CH`: 计数寄存器高位，`counter high`；
+  - `DH`: 数据寄存器高位，`data high`；
+  - `BH`: 基址寄存器高位，`base high`；
+  1. `AL, AH` 分别表示 `AX` 的低 8 位和高 8 位；
+  2. `BP, SP, SI, DI` 没有区分，如果想要对它们取高位或低位数据，就必须先用 `MOV AX, SI` 将 `SI` 的值赋给 `AX`，再用 `AL, AH` 来取值；
+- 16 位寄存器
+  - `AX`: `accumulator`，累加寄存器；
+  - `CX`: `counter`，计数寄存器；
+  - `DX`: `data`，数据寄存器
+  - `BX`: `base`，基址寄存器；
+  - `SP`: `stack pointer`，栈指针寄存器；
+  - `BP`: `base pointer`，基址指针寄存器
+  - `SI`: `source index`，源变址寄存器；
+  - `DI`: `destination index`，目的变址寄存器；
+  1. 在这 8 个寄存器中，不管使用哪一个，差不多都能进行同样的计算，但如果都用 `AX` 来进行各种运算的话，程序就可以写得很简洁：`ADD CX, 0x1234` 编译成 `81 C1 34 12`，是一个 4 字节命令，而 `AD AX, 0x1234` 编译成 05 34 12，是一个 3 字节命令；
+  2. `X`，表示扩展 `extend` 的意思；
+  3. 内存地址的指定方法，不仅可以使用常数，还可以使用寄存器。但只有 `BX, BP, SI, DI` 这几个可作此用途，剩余的 4 个不能用来指定内存地址，这是因为 `CPU` 没有处理这种指令的电路；如果想把 `DX` 内存里的内容赋值给 `AL`，则可以：`MOV BX, DX`，`MOV AL, BYTE [BX]`；
 - 32 位寄存器
-- 段寄存器
+  - `EAX`
+  - `ECX`
+  - `EDX`
+  - `EBX`
+  - `ESP`
+  - `EBP`
+  - `ESI`
+  - `EDI`
+  1. `E` 还是来源于 `extend`，即表示扩展，由 16 位寄存器扩展而来；
+  2. 虽说 `EAX` 是个 32 位寄存器，但其实跟前面一样，它有一部分是与 `AX` 共用的，32 位中的低 16 位就是 `AX`，而高 16 位既没有名字，又没有寄存器编号。也就是说，虽然可以把 `EAX` 作为 2 个 16 位寄存器来用，但只有低 16 位用起来方便。如果想要用高 16 位的话，就需要使用移位命令，把高 16 位移到低 16 位之后才能用；
+- 段寄存器 `segment register`
+  - `ES`: 附加段寄存器，`extra segment`；
+  - `CS`: 代码段寄存器，`code segment`；
+  - `SS`: 栈段寄存器，`stack segment`；
+  - `DS`: 数据段寄存器，`data segment`；
+  - `FS`: 没有名称，`segment part 2`；
+  - `GS`: 没有名称，`segment part 3`；
 #### 从开机到系统运行的启动过程
 - 启动扇区的加载，见“汇编文件进一步加工”；
 ---
 几个概念：`boot, bootloader, bios, u-boot, grup...`
+- `bios`: `basic input output system`，出厂时就组装在电脑主板上的 `ROM` 中，电脑厂家在 `bios` 中预先写入了操作系统开发人员经常会用到的一些程序；
 - `bios` 与 `boot` 程序：
   - 严格说 `BIOS ≠ boot` 程序，而是 `boot` 流程的“第一棒”，它只做最底线的硬件初始化 + 把真正的 `boot` 代码搬进内存并跳转：
     | 项目   | BIOS                            | Boot 程序（Bootloader）        |
