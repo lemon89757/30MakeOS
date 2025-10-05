@@ -35,7 +35,12 @@
   - `DD`: `define double-word`，32 位，即 4 字节；
   - `RESB`: `reserve byte`，预留空间指令。`eg: RESB 10`，表示预留 10 个字节的空间；`RESB 0x1fe-$`，其中 `$` 表示一个变量，用以记录当前的字节数；
   - `ORG`: `Origin`，装载指令，指示将机器语言（当前文本内容）装载到内存中的哪个地址；此时，`$` 指令也不再表示输出文件的第几个字节，而是代表将要读入的内存地址；
-  - `JMP`: 跳转指令（`JMP`）机器码 `EB`；`JE`，条件跳转指令，如果前面的比较指令结果为相等，则转入 `JE` 进行跳转；如果不等，则不跳转，继续执行下一条指令；
+  - `JMP`: 跳转指令（`JMP`）机器码 `EB`；
+    - `JE`，条件跳转指令，如果前面的比较指令结果为相等，则转入 `JE` 进行跳转；如果不等，则不跳转，继续执行下一条指令；
+    - `JC`，`jump if carry`，如果进位标志（`carry flag`）的话，就跳转；
+    - `JNC`, `jump if not carry`，进位标志为 0 的话就跳转；
+    - `JAE`, `jump if above or equal`，大于或等于时跳转；
+    - `JB`, `jump if below`；
   - `MOV`: 赋值指令；`eg`: 
     - `MOV AX,0`、`MOV SS,AX`；
     - `MOV AL,[SI]`：读取 `SI` 的值所对应的内存地址并将读取结果赋给 `AL`）；
@@ -45,6 +50,7 @@
   - `CMP`: 比较指令，`CMP AL, 0`，表示如果二者相等或不等，需要做什么（后接条件跳转指令等）；
   - `INT`: 软件中断指令；
   - `HLT`: `halt`（停止），让 `CPU` 停止动作的指令，使 `CPU` 进入待机状态；在循环中可以避免 `CPU` 全力执行 `JMP` 指令，从而达到降低能耗的目的；
+  - `EQU`: `equal`，可以用来声明常量，相当于 C 中的 `#define`；
 - `asm.bat`
   ```cmd
   ..\z_tools\nask.exe helloos.nas helloos.img
@@ -275,7 +281,7 @@ msg:
   - `EDI`
   1. `E` 还是来源于 `extend`，即表示扩展，由 16 位寄存器扩展而来；
   2. 虽说 `EAX` 是个 32 位寄存器，但其实跟前面一样，它有一部分是与 `AX` 共用的，32 位中的低 16 位就是 `AX`，而高 16 位既没有名字，又没有寄存器编号。也就是说，虽然可以把 `EAX` 作为 2 个 16 位寄存器来用，但只有低 16 位用起来方便。如果想要用高 16 位的话，就需要使用移位命令，把高 16 位移到低 16 位之后才能用；
-- 段寄存器 `segment register`
+- 段寄存器 `segment register`，16 位：
   - `ES`: 附加段寄存器，`extra segment`；
   - `CS`: 代码段寄存器，`code segment`；
   - `SS`: 栈段寄存器，`stack segment`；
@@ -341,5 +347,138 @@ msg:
   - 用户 `bootloader`（就是 `MCU` 开发者口中的 `bootloader`）：放在 `Flash` 起始区域，大小几 KB～几十 KB；任务：初始化时钟、RAM、外设 → 通过 `UART/USB/CAN/OTA` 接收新固件 → 写入应用区 → 跳转到应用；厂商文档里常叫 `secondary bootloader` 或 `user bootloader`；对应到 `PC` 的术语，它正是 第一阶段 `bootloader`（`MBR / SPL` 的角色）；
   - 用户应用程序：放在 `bootloader` 之后；
   - `MCU` 开发者说的 “`bootloader`” ≈ `PC` 的 `first-stage bootloader`，只是 `MCU` 里没有 `BIOS/UEFI`，也没有 `512 B` 限制，常常把“第一阶段”和“第二阶段”合并成一段用户代码罢了。
+
+## 03 Day
+### 制作真正的 `IPL`
+```asm
+MOV AX, 0x082
+MOV ES, AX
+MOV CH, 0       ; 柱面 0
+MOV DH, 0       ; 磁头 0
+MOV CL, 2       ; 扇区 2
+
+MOV AH, 0x02    ; AH=0x12 : 读盘
+MOV AL, 1       ; 1 个扇区
+MOV BX, 0       
+MOV DL, 0x00    ; A 驱动器
+INT 0x13        ; 调用磁盘 BIOS
+JC error
+```
+- `BIOS 0x13` 号函数，读写磁盘：
+  - `AH`: `0x02-read`, `0x03-write`, `0x04`-校验, `0x0c`-寻道；
+  - `AL`: 处理对象的扇区数量，只能同时处理连续的扇区；
+  - `CH`: 柱面号 & `0xff`；
+  - `CL`: 扇区号（0-5 位） | （柱面号 & 0x300） >> 2；
+  - `DH`: 磁头号；
+  - `DL`: 驱动器号；
+  - `ES:BX`: 缓冲地址（校验及寻道时不使用）；
+  - 返回值：`FLACS.CF == 0`，表示没有错误，`AH == 0`；`FLACS.CF == 1`，表示有错误，错误号码存入 `AH` 内（与重置 `reset` 功能一样）；其中 `FLACS.CF` 即进位标志；
+- 一张软盘有 80 个柱面（`cylinder`），2 个磁头，18 个扇区（`sector`），且一个扇区有 512 个字节，于是一张软盘的容量是 `80 * 2 * 18 * 512 = 1474560 Byte = 1440 KB`；
+- 含有 `IPL` 的启动区，位于 `C0-H0-S1`（柱面 0，磁头 0，扇区 1，扇区从 1 开始），下一个扇区是 `C0-H0-S2`，这次想要装载的就是这个扇区；
+- `ES:BX`，缓冲区地址，表明要把从软盘上读出的数据装载到内存的哪个位置；表示方式：段:偏移量，即 `ES << 4 + BX`，于是可以通过两个 16 位寄存器表示出 `1MB` 的寻址空间；上述代码表示将装载的扇区加载到 `0x8200 ~ 0x83ff, 512 Byte` 的内存地址上；另外，`0x8000 ~ 0x81ff` 这 512 字节是留给启动区的；`0x7c00 ~ 0x7dff` 用于启动区，`0x7e00` 以后直到 `0x9fbff` 为止的区域都没有特殊的用途，操作系统可以随便使用；[Memory-Map X86](https://wiki.osdev.org/Memory_Map_(x86))
+- **不管要指定内存的什么地址，都必须同时指定段寄存器**，这是规定。对于上述 `ES:BX`，可以写成 `MOV AL, [ES:BX]`，表示将 `ES:BX` 的值作为内存地址，读取该地址中的内容到 `AL` 中；**一般如果省略段寄存器，则默认使用 `DS`**，即 `MOV AL, [SI]` 被解析为 `MOV AL, [DS:SI]`，因此先给 `DS` 赋值为 0；
+```asm
+; 读磁盘
+        MOV   AX, 0x0820
+        MOV   ES, AX
+        MOV   CH, 0
+        MOV   DH, 0
+        MOV   CL, 2
+
+        MOV   SI, 0       ; 记录失败次数的寄存器
+retry:
+        MOV   AH, 0x02
+        MOV   AL, 1
+        MOV   BX, 0
+        MOV   DL, 0x00
+        INT   0x13
+        JNC   fin         ; 没有出错的话就跳转到 fin
+        ADD   SI, 1
+        CMP   SI, 5
+        JAE   error
+        MOV   AH, 0x00
+        MOV   DL, 0x00    ; A 驱动器
+        INT   0x13        ; 重置驱动器
+        JMP   retry
+```
+- 软盘数据读取时并不一定能够一次就成功，上述实现当数据读取失败时继续读取，直到读取次数达到 5 次仍失败时跳转到错误处理；
+- `AH=0x00, DL=0x00, INT 0x13` 表示系统复位；从而实现复位软盘状态，再读一次；
+```asm
+; 读磁盘
+        MOV   AX, 0x0820
+        MOV   ES, AX
+        MOV   CH, 0       ; 柱面 0
+        MOV   DH, 0       ; 磁头 0
+        MOV   CL, 2       ; 扇区 2
+readloop:
+        MOV   SI, 0
+retry:
+        MOV   AH, 0x02
+        MOV   AL, 1
+        MOV   BX, 0
+        MOV   DL, 0x00
+        INT   0x13
+        JNC   next        ; 没有出错的话就跳转到 next
+        ADD   SI, 1
+        CMP   SI, 5
+        JAE   error
+        MOV   AH, 0x00
+        MOV   DL, 0x00
+        INT   0x13
+        JMP   retry
+next:
+        MOV   AX, ES
+        ADD   AX, 0x0020
+        MOV   ES, AX      ; 因为没有 ADD ES, 0x0020 指令
+        ADD   CL, 1       ; 读取下一个扇区
+        CMP   CL, 18
+        JBE   readloop    ; 读到 18 （含第 18） 个扇区
+```
+- 上述实现读取第 2-18 个扇区的数据到以 0x0820 开始的内存地址上，具体区间为 `0x0820 ~ 0x29ff`（书中是 `0x8200 ~ 0xa3ff`），17 个扇区，数据量为 `17 x 512 = 8704 Byte`；
+- 其中 `ADD AX, 0x0020` 中的 `0x0020 = 512 / 16`，也可以直接写成 `ADD AX, 512/16` 或者往 `BX` 加上 512，但需要注意后续循环中给 `BX` 赋值为 0 了；
+- 上述读取 17 个扇区的数据，可以直接写成 `AL = 17`。但是在磁盘 `BIOS` 读盘函数说明中指出：“指定处理的扇区数，范围在 `0x01 ~ 0xff`（指定 `0x02` 以上数值时，要特别注意能够连续处理多个扇区的条件。如果是 `FD` 的话，似乎不能跨越多个磁道，也不能超过 64KB 的界限）”；
+```asm
+CYLS	  EQU		10
+
+; 读磁盘
+        MOV   AX, 0x0820
+        MOV   ES, AX
+        MOV   CH, 0       ; 柱面 0
+        MOV   DH, 0       ; 磁头 0
+        MOV   CL, 2       ; 扇区 2
+readloop:
+        MOV   SI, 0
+retry:
+        MOV   AH, 0x02
+        MOV   AL, 1
+        MOV   BX, 0
+        MOV   DL, 0x00
+        INT   0x13
+        JNC   next
+        ADD   SI, 1
+        CMP   SI, 5
+        JAE   error
+        MOV   AH, 0x00
+        MOV   DL, 0x00
+        INT   0x13
+        JMP   retry
+next:
+        MOV   AX, ES
+        ADD   AX, 0x0020
+        MOV   ES, AX      
+        ADD   CL, 1       
+        CMP   CL, 18
+        JBE   readloop
+        MOV   CL, 1
+        ADD   DH, 1
+        CMP   DH, 2
+        JB    readloop
+        MOV   DH, 0
+        ADD   CH, 1
+        CMP   CH, CYLS
+        JB    readloop
+```
+- 上述实现连续读取 10 个柱面的内容；
+- 读取的内容：`10 x 2 x 18 x 512 = 184 320 Byte = 180 KB`，装载区间：`0x08200 ~ 0x34fff`；
 
 ## 第一周小结

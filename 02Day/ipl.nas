@@ -22,7 +22,7 @@
         DD      2880
         DB      0,0,0x29
         DD      0xffffffff
-        DB      "HELLO-OS"
+        DB      "HELLO-OS   "
         DB      "FAT12   "
         RESB    18
 
