@@ -13,7 +13,7 @@ SCRNX       EQU     0x0ff4                  ; 分辨率 x
 SCRNY       EQU     0x0ff6                  ; 分辨率 y
 VRAM        EQU     0x0ff8                  ; 图像缓冲区的起始地址
 
-        ORG     0xc200                      ; 这个程序要被装载的内存地址
+        ORG     0xc200                      ; 汇编器的偏移地址（不是物理装载地址）
 
         MOV     AL, 0x13                    ; VGA 显卡
         MOV     AH, 0x00
@@ -81,7 +81,7 @@ pipelineflush:
 ; 从引导区开始
 
         MOV     ESI, 0x7c00                 ; 源
-        MOV     EDI, DSKCAC                 ；目标
+        MOV     EDI, DSKCAC                 ; 目标
         MOV     ECX, 512/4
         CALL    memcpy
 
@@ -91,7 +91,7 @@ pipelineflush:
         MOV     EDI, DSKCAC+512             ; 目标
         MOV     ECX, 0
         MOV     CL, BYTE [CYLS]
-        MOV     ECX, 512*18*2/4             ; 除以 4 得到字节数
+        IMUL    ECX, 512*18*2/4             ; 除以 4 得到字节数
         SUB     ECX, 512 / 4                ; IPL 偏移量
         CALL    memcpy
 
