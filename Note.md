@@ -696,4 +696,55 @@ next:
 - `p[i]` 与 `*(p + i)` 等价；由于加法运算可以交换顺序，所以将 `*(p + i)` 写成 `*(i + p)` 也是可以的。同理，将 `p[i]` 写成 `i[p]` 也是可以的；本质上讲，`p[i]` 是一种省略写法，与数组没有关系，**表示相对于 `p` 表示地址的偏移量**；
 - `char` 型变量有 3 种模式，`signed`，`unsigned` 以及未指定型，其中未指定型是没有特别指定时，可由编译器决定是 `unsigned` 还是 `signed`；
 
+## 05 Day
+### 从 bootinfo 中获取信息
+- 单独保存每个 bootinfo 信息
+  ```c
+  // Harimain.c
+  void Harimain(void){
+    char *vram;
+    int *binfo_vram;
+    int xsize, ysize,
+    short *binfo_scrnx, *binfo_scrny;
+
+    init_palette();
+    binfo_scrnx = (short*) 0x0ff4;    // 对应到 asmhead.nas 中指定的地址
+    binfo_srcny = (short*) 0x0ff6;
+    binfo_vram  = (int*)   0x0ff8;
+    xsize       = *binfo_scrnx;
+    ysize       = *binfo_scrny;
+    vram        = (char*) binfo_vram;
+  }
+  ```
+- 通过结构体保存 bootinfo 信息
+  ```c
+  /* BootInfo 占 8 字节 */
+  struct BootInfo{
+    char cyls, leds, vmode, reserve;
+    short xsize, ysize;
+    char *vram;
+  }
+
+  /* 通过 '.' 来访问结构体成员 */
+  void HariMain(void){
+    char *vram;
+    int xsize, ysize;
+    struct BootInfo *binfo;
+
+    init_palette();
+    binfo = (struct BootInfo*) 0x0ff0;
+    xsize = (*binfo).xsize;
+    ysize = (*binfo).ysize;
+    vram  = (*binfo).vram;
+  }
+
+  /* 通过 '->' 来访问结构体成员 */
+  void HariMain(void){
+    struct BootInfo *binfo = (struct BootInfo*) 0x0ff0;
+    init_palette();
+    init_screen(binfo->vram, binfo->srcnx, binfo->srcny);
+  }
+  ```
+  **其中，指针的偏移单位与指针所指实际数据类型大小相关**。如 `struct BootInfo *p; p++;` 导致指针 `p` 在实际内存中偏移 8 个地址；
+
 ## 第一周小结
