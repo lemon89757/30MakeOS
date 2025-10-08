@@ -4,8 +4,22 @@ void io_hlt(void);
 void io_cli(void);
 void io_out8(int port, int data);
 void io_store_eflags(int eflags);
+void load_gdtr(int limit, int addr);
+void load_idtr(int limit, int addr);
 int io_load_eflags(void);
 void write_mem8(int addr, int data);
+
+
+struct SegmentDescription{
+    short limit_low, base_low;
+    char base_mid, access_right;
+    char limit_high, base_high;
+};
+struct GateDescription{
+    short offset_low, selector;
+    char dw_count, access_right;
+    short offset_high;
+};
 
 void init_palette(void);
 void init_screen(char *vram, int x, int y);
@@ -15,6 +29,9 @@ void putfont8(char *vram, int xsize, int x, int y, char c, char *font);
 void putfont8_asc(char *vram, int xsize, int x, int y, char c, unsigned char *s);
 void init_mouse_cursor8(char *mouse, char bc);
 void putblock8_8(char *vram, int vxsize, int pxsize, int pysize, int px0, int py0, char *buf, int bxsize);
+void init_gdtidt(void);
+void set_segmdesc(struct SegmentDescription *sd, unsigned int limit, int base, int ar);
+void set_gatedesc(struct GateDescription *gd, int offset, int selector, int ar);
 
 #define COL8_000000    0 // 黑
 #define COL8_FF0000    1 // 亮红
@@ -279,5 +296,52 @@ void putblock8_8(char *vram, int vxsize, int pxsize, int pysize, int px0, int py
             vram[(py0 + y) * vxsize + (px0 + x)] = buf[y * bxsize + x];
         }
     }
+    return;
+}
+
+void init_gdtidt(void){
+    struct SegmentDescription *gdt = (struct SegmentDescription *) 0x00270000;
+    struct GateDescription    *idt = (struct GateDescription    *) 0x0026f800;
+    int i;
+
+    // GDT
+    for(i = 0; i < 8192; i++){
+        set_segmdesc(gdt + i, 0, 0, 0);
+    }
+    set_segmdesc(gdt + 1, 0xffffffff, 0x00000000, 0x4092); // 段号为 1 的段，表示整个内存
+    set_segmdesc(gdt + 2, 0x0007ffff, 0x00280000, 0x409a); // 段号为 2 的段，表示 bootpack.hrb 所在的内存
+
+    load_gdtr(0xffff, 0x00270000);                         // limit = 8 x 8192 - 1
+
+    // IDT
+    for(i = 0; i < 256; i++){
+        set_gatedesc(idt + i, 0, 0, 0);
+    }
+
+    load_idtr(0x7ff, 0x0026f800);                         // limit = 8 x 256 - 1  
+
+    return;
+}
+
+void set_segmdesc(struct SegmentDescription *sd, unsigned int limit, int base, int ar){
+    if(limit > 0xfffff){
+        ar |= 0x8000; // G_bit = 1
+        limit /= 0x1000;
+    }
+    sd->limit_low    = limit & 0xffff;
+    sd->base_low     = base & 0xffff;
+    sd->base_mid     = (base >> 16) & 0xff;
+    sd->access_right = ar & 0xff;
+    sd->limit_high   = ((limit >> 16) & 0x0f) | ((ar >> 8) & 0xf0);
+    sd->base_high    = (base >> 24) & 0xff;
+    return;
+}
+
+void set_gatedesc(struct GateDescription *gd, int offset, int selector, int ar){
+    gd->offset_low  = offset & 0xffff;
+    gd->selector    = selector;
+    gd->dw_count    = (ar >> 8) & 0xff;
+    gd->access_right= ar & 0xff;
+    gd->offset_high = (offset >> 16) & 0xffff;
     return;
 }
