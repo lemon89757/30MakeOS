@@ -747,4 +747,136 @@ next:
   ```
   **其中，指针的偏移单位与指针所指实际数据类型大小相关**。如 `struct BootInfo *p; p++;` 导致指针 `p` 在实际内存中偏移 8 个地址；
 
+### 显示字符
+- 自定义字符数据
+  - 之前显示字符时，主要靠调用 `BIOS` 函数（16 位模式，如 `helloReadable.nas` 中显示 `hello, world`），但现在是 32 位模式，不能再依赖 `BIOS` 了（可以向显卡内存中写入数据）。
+  - 字符可以用 `8 x 16` 的长方形像素点阵来表示，于是一个字符占 16 个字节；
+  - 定义一个字符 `A` 的数据并显示：
+    ```c
+    static char font_A[16] = {
+      0x00, 0x18, 0x18, 0x18, 0x18, 0x24, 0x24, 0x24, 
+      0x24, 0x7e, 0x42, 0x42, 0x42, 0xe7, 0x00, 0x00
+    };
+
+    /*
+    void putfont8(char *vram, int xsize, int x, int y, char c, char *font){
+      int i;
+      char d;
+      for(i = 0; i < 16; ++i){
+        d = font[i];
+        if((d & 0x80) != 0) (vram[(y + i) * xsize + x + 0] = c);
+        if((d & 0x40) != 0) (vram[(y + i) * xsize + x + 1] = c);
+        if((d & 0x20) != 0) (vram[(y + i) * xsize + x + 2] = c);
+        if((d & 0x10) != 0) (vram[(y + i) * xsize + x + 3] = c);
+        if((d & 0x08) != 0) (vram[(y + i) * xsize + x + 4] = c);
+        if((d & 0x04) != 0) (vram[(y + i) * xsize + x + 5] = c);
+        if((d & 0x02) != 0) (vram[(y + i) * xsize + x + 6] = c);
+        if((d & 0x01) != 0) (vram[(y + i) * xsize + x + 7] = c);
+      }
+      return;
+    }
+    */
+
+    void putfont8(char *vram, int xsize, int x, int y, char c, char *font){
+      int i;
+      char *p, d;
+      for(i = 0; i < 16; ++i){
+        p = vram + (y + i) * xsize + x;
+        d = font[i];
+        if((d & 0x80) != 0) (p[0] = c);
+        if((d & 0x40) != 0) (p[1] = c);
+        if((d & 0x20) != 0) (p[2] = c);
+        if((d & 0x10) != 0) (p[3] = c);
+        if((d & 0x08) != 0) (p[4] = c);
+        if((d & 0x04) != 0) (p[5] = c);
+        if((d & 0x02) != 0) (p[6] = c);
+        if((d & 0x01) != 0) (p[7] = c);
+      }
+      return;
+    }
+    ```
+- 增加字体
+  - 新增字体文件 `hankaku.txt`，通过 `makefont.exe` 将其转换成 `hankaku.bin` 二进制文件（`16 x 256 = 4096 Byte`），之后再由 `bin2obj.exe` 对其添加链接所需的接口信息以形成目标文件（`.obj`），最后完成与 `bootpack.obj` 的链接；转换成 `.obj` 文件相当于：
+    ```asm
+    _hankaku:
+        DB 各种数据（共 4096 字节）
+    ```
+    在 C 语言中使用：
+    ```c
+    extern char hankaku[4096];
+    ```
+    另外，字体数据按照 `ASCII` 字符编码，因此 `A` 的数据放在 `hankaku + 16 * 41` 的位置，`A` 的 `ASCII` 码为 41，还可以直接写字符 `A`。在 `Makefile` 文件对应的更改：
+    ```Makefile
+    MAKEFONT = $(TOOLPATH)/makefont.exe
+    BIN2OBJ	 = $(TOOLPATH)/bin2obj.exe
+    
+    hankaku.bin : hankaku.txt Makefile
+      $(MAKEFONT) hankaku.txt hankaku.bin
+    
+    hankaku.obj : hankaku.bin Makefile
+      $(BIN2OBJ)  hankaku.bin hankaku.obj _hankaku
+
+    bootpack.bin : bootpack.obj naskfunc.obj hankaku.obj Makefile
+      $(OBJ2BIM) @$(RULEFILE) out:bootpack.bim stack:3136k map:bootpack.map \
+        bootpack.obj naskfunc.obj hankaku.obj
+    ```
+- 显示变量
+  - 在做出调试器之前，只能通过显示变量值来查看确认问题的地方；
+  - 可以使用 `sprintf` 来显示，虽然自制操作系统中不能随便使用 `printf` 函数，但 **`sprintf` 可以使用，因为它不是按指定格式输出，而是将输出内容作为字符串写在内存中**；`sprintf` 为本次使用的是名为 `GO` 的 C 语言编译器附带的函数，能够不使用操作系统的任何功能；`printf`（输出字符串的方法）不可避免地要使用操作系统的功能，而 `sprintf` 不同，它只对内存进行操作，所以可以应用于所有操作系统；
+  - 使用 `sprintf` 函数需包含 `<stdio.h>` 头文件；
+  - 封装成函数 `putfont8_asc` 以显示 `ASCII` 字符串；**所谓字符串是按顺序排列在内存里，末尾再加上 `0x00` 而组成的字符编码**；
+- 显示鼠标指针
+  - 定义鼠标图标数据
+    ```c
+    void init_mouse_cursor8(char *mouse, char bc){
+      static char cursor[16][16] = {
+        "**************..",
+        "*00000000000*...",
+        "*0000000000*....",
+        "*000000000*.....",
+        "*00000000*......",
+        "*0000000*.......",
+        "*0000000*.......",
+        "*00000000*......",
+        "*0000**000*.....",
+        "*000*..*000*....",
+        "*00*....*000*...",
+        "*0*......*000*..",
+        "**........*000*.",
+        "*..........*000*",
+        "............*00*",
+        ".............***",
+      };
+      int x, y;
+
+      for(y = 0; y < 16; ++y){
+        for(x = 0; x < 16; ++x){
+          if(cursor[y][x] == '*'){
+            mouse[y * 16 + x] = COL8_000000;
+          }
+          if(cursor[y][x] == '0'){
+            mouse[y * 16 + x] = COL8_FFFFFF;
+          }
+          if(cursor[y][x] == '.'){
+            mouse[y * 16 + x] = bc;
+          }
+        }
+      }
+
+      return;
+    }
+    ```
+  - 显示图标
+    ```c
+    void putblock8_8(char *vram, int vxsize, int pxsize, int pysize, int px0, int py0, char *buf, int bxsize){
+      int x, y;
+      for(y = 0; y < pysize; ++y){
+        for(x = 0; x < pxsize; ++x){
+          vram[(py0 + y) * vxsize + (px0 + x)] = buf[y * bxsize + x];
+        }
+      }
+      return;
+    }
+    ```
+
 ## 第一周小结
